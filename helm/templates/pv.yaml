@@ -1,0 +1,38 @@
+{{- range .Values.persistentVolumes }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "oc-serve.namespace" $ }}
+spec:
+  {{- if .storageClassName}}
+  storageClassName: {{ .storageClassName }}
+  {{- end }}
+  {{- if .capacity }}
+  capacity:
+    {{- if .capacity.storage }}
+    storage: {{ .capacity.storage }}
+    {{- end }}
+  {{- end }}
+  {{- if .reclaimPolicy}}
+  persistentVolumeReclaimPolicy: {{ .reclaimPolicy }}
+  {{- end }}
+  {{- if .claimRef }}
+  claimRef:
+    name: {{ .claimRef.name }}
+    namespace: {{ include "oc-serve.namespace" $ }}
+  {{- end }}
+  {{- if .accessModes }}
+  accessModes:
+    {{- range .accessModes }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if .hostPath }}
+  hostPath:
+    {{- if .hostPath.path }}
+    path: {{ .hostPath.path }}
+  {{- end }}
+  {{- end }}
+{{- end }}

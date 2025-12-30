@@ -1,0 +1,27 @@
+{{- range .Values.persistentVolumeClaims }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .name }}
+  namespace: {{ include "oc-serve.namespace" $ }}
+spec:
+  {{- if .storageClassName }}
+  storageClassName: {{ .storageClassName }}
+  {{- end }}
+  {{- if .accessModes }}
+  accessModes:
+    {{- range .accessModes }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if .resources }}
+  resources:
+    {{- if .resources.requests }}
+    requests:
+      {{- if .resources.requests.storage }}
+      storage: {{ .resources.requests.storage }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

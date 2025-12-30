@@ -1,0 +1,110 @@
+applications:
+  - name:  whisper
+    configs:
+      import_path: app:application
+      route_prefix: /whisper
+      deployments:
+        - name: Ray
+          num_replicas: 1
+          max_ongoing_requests: 10
+          max_queued_requests: 5
+          user_config: {}
+          ray_actor_options:
+            num_cpus: 4
+            num_gpus: 1
+            accelerator_type: A4000
+            runtime_env:
+              env_vars:
+                OC_SERVE_ORCHESTRATOR_TYPE: ray
+                RAY_NAME: whisper
+                RAY_BACKEND_SERVER_TYPE: vllm
+                VLLM_MODEL: openai/whisper-base
+                VLLM_EXTRA_VLLM_USE_V1: 1
+                VLLM_EXTRA_USE_TRANSCRIBE_SERVER: 1
+                VLLM_TENSOR_PARALLEL_SIZE: 1
+                VLLM_GPU_MEMORY_UTILIZATION: "0.90"
+                VLLM_DTYPE: bfloat16
+                HUGGING_FACE_HUB_TOKEN: h<your_huggingface_token>
+  - name: llama3
+    configs:
+      import_path: app:application
+      route_prefix: /llama3
+      deployments:
+        - name: Ray
+          num_replicas: 2
+          ray_actor_options:
+            num_cpus: 8
+            num_gpus: 2
+            accelerator_type: A100
+            runtime_env:
+              env_vars:
+                OC_SERVE_ORCHESTRATOR_TYPE: ray
+                RAY_NAME: llama3
+                RAY_BACKEND_SERVER_TYPE: vllm
+                VLLM_MODEL: meta-llama/Llama-3-8B
+                VLLM_EXTRA_VLLM_USE_V1: 1
+                VLLM_TENSOR_PARALLEL_SIZE: 2
+                VLLM_GPU_MEMORY_UTILIZATION: '0.95'
+                VLLM_DTYPE: bfloat16
+                HUGGING_FACE_HUB_TOKEN: h<your_huggingface_token>
+
+orchestrator:
+  type: ray
+  ray:
+    workerGroups:
+      - groupName: worker-group-01
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 1
+        nodeSelector:
+          nvidia.com/gpu.family: ampere
+        containers:
+          - name: ctr-worker-01
+            resources:
+              limits:
+                cpu: '4'
+                memory: 8Gi
+                gpu: 1
+              requests:
+                cpu: '4'
+                memory: 8Gi
+                gpu: 1
+            volumeMounts: []
+            env:
+              - name: RAY_GCS_RPC_TIMEOUT_S
+                value: '100000000000'
+              - name: RAY_BACKEND_SERVER_TYPE
+                value: vllm
+              - name: OC_SERVE_ORCHESTRATOR_TYPE
+                value: ray
+              - name: HUGGING_FACE_HUB_TOKEN
+                value: <your_huggingface_token>
+        volumes: []
+      - groupName: worker-group-02
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 1
+        nodeSelector:
+          nvidia.com/gpu.family: ampere
+        containers:
+          - name: ctr-worker-02
+            resources:
+              limits:
+                cpu: '4'
+                memory: 8Gi
+                gpu: 2
+              requests:
+                cpu: '4'
+                memory: 8Gi
+                gpu: 2
+            volumeMounts: []
+            env:
+              - name: RAY_GCS_RPC_TIMEOUT_S
+                value: '100000000000'
+              - name: OC_SERVE_ORCHESTRATOR_TYPE
+                value: ray
+              - name: RAY_BACKEND_SERVER_TYPE
+                value: vllm
+              - name: HUGGING_FACE_HUB_TOKEN
+                value: <your_huggingface_token>
+        volumes: []

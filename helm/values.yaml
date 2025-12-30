@@ -1,0 +1,64 @@
+global:
+  namespaceOverride: ""
+  registry: docker.io
+  image_name: ocrn/oc-serve
+  version: 0.0.1-beta
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+applications: []
+
+orchestrator:
+  type: ray
+  ray:
+    name: oc-serve
+    rayVersion: 2.49.2
+    # Disable redis installation to use external redis
+    # gcsFaultToleranceOptions:
+    #   redisAddress: "external-redis:6379"
+    dashboardHost: 0.0.0.0
+    head:
+      nodeSelector: {}
+      containers:
+        - name: ctr-oc-serve-head
+          resources:
+            limits:
+              cpu: '4'
+              memory: 8Gi
+            requests:
+              cpu: '4'
+              memory: 8Gi
+          ports:
+            - containerPort: 6379
+              name: gcs-server
+              protocol: TCP
+            - containerPort: 8265
+              name: dashboard
+              protocol: TCP
+            - containerPort: 10001
+              name: client
+              protocol: TCP
+            - containerPort: 8000
+              name: serve
+              protocol: TCP
+          volumeMounts: []
+      volumes: []
+    workerGroups: []
+ServiceAccounts: []
+vault:
+  enabled: false
+  role: ""
+  serviceAccount: ""
+  secrets: []
+httproutes: []
+ingresses: []
+tcpRoutes: []
+udpRoutes: []
+persistentVolumes: []
+persistentVolumeClaims: []
+
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: false

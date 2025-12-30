@@ -1,0 +1,30 @@
+apiVersion: v2
+name: oc-serve
+description: A Helm chart for deploying OC-Serve solution
+version: 0.0.1-beta
+appVersion: "0.0.1-beta"
+
+maintainers:
+  - name: Abdelrahman Seleem
+    email: seleem@ieee.org
+
+keywords:
+  - oc-serve
+  - large-language-models
+  - llm
+  - genai
+  - text-to-speech
+  - speech-to-text
+  - nlp
+  - computer-vision
+  - large-vision-models
+
+sources: []
+
+dependencies:
+  - name: redis
+    version: 24.1.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+
+kubeVersion: ">=1.25.0-0"

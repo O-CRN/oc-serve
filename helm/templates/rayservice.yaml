@@ -1,0 +1,444 @@
+{{- if and .Values.orchestrator (eq .Values.orchestrator.type "ray") }}
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: {{ .Values.orchestrator.ray.name }}
+  namespace: {{ include "oc-serve.namespace" . }}
+  {{- if .Values.vault.enabled }}
+  annotations:
+    ray.io/overwrite-container-cmd: "true"
+  {{- end }}
+
+spec:
+  {{- if .Values.orchestrator.ray.serviceUnhealthySecondThreshold }}
+  serviceUnhealthySecondThreshold: {{ .Values.orchestrator.ray.serviceUnhealthySecondThreshold }}
+  {{- end }}
+  {{- if .Values.orchestrator.ray.deploymentUnhealthySecondThreshold }}
+  deploymentUnhealthySecondThreshold: {{ .Values.orchestrator.ray.deploymentUnhealthySecondThreshold }}
+  {{- end }}
+  serveConfigV2: |
+    applications:
+      {{- range .Values.applications }}
+      - name: {{ .name }}
+        {{- if .configs.import_path }}
+        import_path: {{ .configs.import_path }}
+        {{- end }}
+        {{- if .configs.route_prefix }}
+        route_prefix: {{ .configs.route_prefix }}
+        {{- end }}
+        {{- if .configs.deployments }}
+        deployments:
+          {{- range .configs.deployments }}
+          - name: {{ .name }}
+            {{- if .user_config }}
+            user_config:
+              {{- range $key, $value := .user_config }}
+              {{ $key }}: {{ $value }}
+              {{- end }}
+            {{- end}}
+            {{- if .max_ongoing_requests }}
+            max_ongoing_requests: {{ .max_ongoing_requests }}
+            {{- end }}
+            {{- if .max_queued_requests }}
+            max_queued_requests: {{ .max_queued_requests }}
+            {{- end }}
+            {{- if .placement_group_bundles }}
+            placement_group_bundles: {{ .placement_group_bundles }}
+            {{- end }}
+            {{- if .placement_group_strategy }}
+            placement_group_strategy: {{ .placement_group_strategy }}
+            {{- end }}
+            {{- if .num_replicas }}
+            num_replicas: {{ .num_replicas }}
+            {{- end }}
+            {{- if .ray_actor_options }}
+            ray_actor_options:
+              {{- if .ray_actor_options.num_cpus }}
+              num_cpus: {{ .ray_actor_options.num_cpus }}
+              {{- end }}
+              {{- if .ray_actor_options.num_gpus }}
+              num_gpus: {{ .ray_actor_options.num_gpus }}
+              {{- end }}
+              {{- if .ray_actor_options.accelerator_type }}
+              accelerator_type: '{{ .ray_actor_options.accelerator_type }}'
+              {{- end }}
+              {{- if .ray_actor_options.runtime_env }}
+              runtime_env:
+                {{- if .ray_actor_options.runtime_env.env_vars}}
+                env_vars:
+                  {{- range $key, $value := .ray_actor_options.runtime_env.env_vars }}
+                  {{ $key }}: "{{ $value }}"
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+
+  rayClusterConfig:
+    {{- if .Values.orchestrator.ray.rayVersion }}
+    rayVersion: '{{ .Values.orchestrator.ray.rayVersion }}'
+    {{- end }}
+    {{- $redisAddr := include "oc-serve.redisAddress" . -}}
+    {{- if $redisAddr }}
+    gcsFaultToleranceOptions:
+      redisAddress: "{{ $redisAddr }}"
+    {{- end }}
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '{{ .Values.orchestrator.ray.dashboardHost | default "0.0.0.0" }}'
+      {{- if .Values.orchestrator.ray.serviceType }}
+      serviceType: {{ .Values.orchestrator.ray.serviceType | default "ClusterIP" }}
+      {{- end }}
+      template:
+      {{- if .Values.vault.enabled }}
+        metadata:
+          annotations:
+            ray.io/overwrite-container-cmd: "true"
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/agent-inject-status: "update"
+            vault.hashicorp.com/role: "{{ .Values.vault.role }}"
+            {{- range .Values.vault.secrets }}
+            vault.hashicorp.com/agent-inject-secret-{{ .name }}: "{{ .path }}"
+            vault.hashicorp.com/agent-inject-template-{{ .name }}: |
+              {{`{{- with secret "`}}{{ .path }}{{`" -}}`}}
+              {{- range .keys }}
+              {{- if .envName }}
+              export {{ .envName }}={{`"{{ (index .Data.data "`}}{{ .key }}{{`") }}"`}}
+              {{- else if .fileName }}
+              {{`{{ (index .Data.data "`}}{{ .key }}{{`") | writeToFile (printf "/vault/secrets/%s" "`}}{{ .fileName }}{{`") "vault" "vault" "0644" }}`}}
+              {{- end }}
+              {{- end }}
+              {{`{{- end -}}`}}
+            {{- end }}
+      {{- end }}
+        spec:
+          {{- if .Values.orchestrator.ray.head.nodeSelector }}
+          nodeSelector:
+            {{- range $key, $value := .Values.orchestrator.ray.head.nodeSelector }}
+            {{ $key }}: '{{ $value }}'
+            {{- end }}
+          {{- end }}
+          {{- if .Values.orchestrator.ray.head.tolerations }}
+          tolerations:
+            {{- toYaml .Values.orchestrator.ray.head.tolerations | nindent 12 }}
+          {{- end }}
+          {{- if .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- range .Values.global.imagePullSecrets }}
+            - name: {{ .name }}
+            {{- end }}
+          {{- else }}
+          imagePullSecrets: []
+          {{- end }}
+          {{- if .Values.vault.enabled }}
+          serviceAccountName: {{ .Values.vault.serviceAccount }}
+          {{- end }}
+          containers:
+            {{- range .Values.orchestrator.ray.head.containers }}
+            - name: {{ .name }}
+              image: "{{ $.Values.global.registry }}/{{ $.Values.global.image_name }}:{{ $.Values.global.version }}"
+              imagePullPolicy: {{ default "Always" $.Values.global.imagePullPolicy }}
+              {{- if $.Values.vault.enabled }}
+              command: 
+                  - "/bin/bash"
+                  - "-lc"
+                  - |
+                    ulimit -n 65536;
+                    for file in /vault/secrets/*; do
+                      if [ -f "$file" ]; then
+                        source "$file";
+                      fi;
+                    done;
+                    printenv;
+                    $KUBERAY_GEN_RAY_START_CMD
+              {{- end }}
+              {{- if .securityContext }}
+              securityContext:
+                {{- toYaml .securityContext | nindent 16 }}
+              {{- end }}
+              {{- if .resources }}
+              resources:
+                {{- if .resources.limits }}
+                limits:
+                  {{- if .resources.limits.cpu }}
+                  cpu: "{{ .resources.limits.cpu }}"
+                  {{- end }}
+                  {{- if .resources.limits.memory }}
+                  memory: "{{ .resources.limits.memory }}"
+                  {{- end }}
+                  {{- if .resources.limits.gpu }}
+                  nvidia.com/gpu: "{{ .resources.limits.gpu }}"
+                  {{- end }}
+                {{- end }}
+                {{- if .resources.requests }}
+                requests:
+                  {{- if .resources.requests.cpu }}
+                  cpu: "{{ .resources.requests.cpu }}"
+                  {{- end }}
+                  {{- if .resources.requests.memory }}
+                  memory: "{{ .resources.requests.memory }}"
+                  {{- end }}
+                  {{- if .resources.requests.gpu }}
+                  nvidia.com/gpu: "{{ .resources.requests.gpu }}"
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              {{- if .ports }}
+              ports:
+                {{- range .ports }}
+                - containerPort: {{ .containerPort }}
+                  name: {{ .name }}
+                  protocol: {{ .protocol }}
+                {{- end }}
+              {{- end }}
+              {{- if .volumeMounts }}
+              volumeMounts:
+                {{- range .volumeMounts }}
+                - mountPath: {{ .mountPath }}
+                  name: {{ .name }}
+                {{- end }}
+              {{- end }}
+              {{- if .hostAliases }}
+              hostAliases:
+                {{- range $i, $alias := .hostAliases }}
+                {{- if not (and $alias.ip $alias.hostnames) }}
+                {{- fail (printf "Invalid hostAlias at index %d: both 'ip' and 'hostnames' must be set." $i) }}
+                {{- end }}
+                - ip: {{ $alias.ip | quote }}
+                  hostnames:
+                    {{- range $alias.hostnames }}
+                    - {{ . | quote }}
+                    {{- end }}
+                {{- end }}
+              {{- end }}
+              {{- if .env }}
+              env:
+                {{- range .env }}
+                - name: {{ .name }}
+                  {{- if not (eq .value nil) }}
+                  value: {{ .value | quote }}
+                  {{- else if .valueFrom}}
+                  valueFrom:
+                    {{- toYaml .valueFrom | nindent 20 }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- if .Values.orchestrator.ray.head.volumes }}
+          volumes:
+            {{- range .Values.orchestrator.ray.head.volumes }}
+            - name: {{ .name }}
+              {{- if .persistentVolumeClaim }}
+              persistentVolumeClaim:
+                claimName: {{ .persistentVolumeClaim.claimName }}
+              {{- end }}
+              {{- if .configMap }}
+              configMap:
+                name: {{ .configMap }}
+              {{- end }}
+              {{- if .secretName }}
+              secret:
+                secretName: {{ .secretName }}
+              {{- end }}
+              {{- if .hostPath }}
+              hostPath:
+                path: {{ .hostPath.path }}
+                {{- if .hostPath.type }}
+                type: {{ .hostPath.type }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+
+    workerGroupSpecs:
+      {{- range .Values.orchestrator.ray.workerGroups }}
+      - groupName: {{ .groupName }}
+        {{- if .minReplicas }}
+        minReplicas: {{ .minReplicas }}
+        {{- end }}
+        {{- if .maxReplicas }}
+        maxReplicas: {{ .maxReplicas }}
+        {{- end }}
+        {{- if .replicas }}
+        replicas: {{ .replicas }}
+        {{- end }}
+        {{- if .rayStartParams }}
+        rayStartParams: {{ .rayStartParams | toYaml | nindent 8 }}
+        {{- else }}
+        rayStartParams: {}
+        {{- end }}
+        {{- if .nodeSelector }}
+        {{- end }}
+        template:
+        {{- if $.Values.vault.enabled }}
+          metadata:
+            annotations:
+              ray.io/overwrite-container-cmd: "true"
+              vault.hashicorp.com/agent-inject: "true"
+              vault.hashicorp.com/agent-inject-status: "update"
+              vault.hashicorp.com/role: "{{ $.Values.vault.role }}"
+              {{- range $.Values.vault.secrets }}
+              vault.hashicorp.com/agent-inject-secret-{{ .name }}: "{{ .path }}"
+              vault.hashicorp.com/agent-inject-template-{{ .name }}: |
+                {{`{{- with secret "`}}{{ .path }}{{`" -}}`}}
+                {{- range .keys }}
+                {{- if .envName }}
+                export {{ .envName }}={{`"{{ (index .Data.data "`}}{{ .key }}{{`") }}"`}}
+                {{- else if .fileName }}
+                {{`{{ (index .Data.data "`}}{{ .key }}{{`") | writeToFile (printf "/vault/secrets/%s" "`}}{{ .fileName }}{{`") "vault" "vault" "0644" }}`}}
+                {{- end }}
+                {{- end }}
+                {{`{{- end -}}`}}
+              {{- end }}
+        {{- end }}
+          spec:
+            {{- if $.Values.global.imagePullSecrets }}
+            imagePullSecrets:
+              {{- range $.Values.global.imagePullSecrets }}
+              - name: {{ .name }}
+              {{- end }}
+            {{- else }}
+            imagePullSecrets: []
+            {{- end }}
+            {{- if .nodeSelector }}
+            nodeSelector:
+              {{- range $key, $value := .nodeSelector }}
+              {{ $key }}: '{{ $value }}'
+              {{- end }}
+            {{- end }}
+            {{- if .tolerations }}
+            tolerations:
+              {{- toYaml .tolerations | nindent 14 }}
+            {{- end }}
+            {{- if $.Values.vault.enabled }}
+            serviceAccountName: {{ $.Values.vault.serviceAccount }}
+            {{- end }}
+            containers:
+              {{- range .containers }}
+              - name: {{ .name }}
+                image: "{{ $.Values.global.registry }}/{{ $.Values.global.image_name }}:{{ $.Values.global.version }}"
+                imagePullPolicy: {{ default "Always" $.Values.global.imagePullPolicy }}
+                {{- if $.Values.vault.enabled }}
+                command: 
+                  - "/bin/bash"
+                  - "-lc"
+                  - |
+                    ulimit -n 65536;
+                    for file in /vault/secrets/*; do
+                      if [ -f "$file" ]; then
+                        source "$file";
+                      fi;
+                    done;
+                    printenv;
+                    $KUBERAY_GEN_RAY_START_CMD
+                {{- end }}
+                {{- if .securityContext }}
+                securityContext:
+                  {{- toYaml .securityContext | nindent 18 }}
+                {{- end }}
+                {{- if .ports }}
+                ports:
+                  {{- range .ports }}
+                  - containerPort: {{ .containerPort }}
+                    name: {{ .name }}
+                    protocol: {{ .protocol }}
+                  {{- end }}
+                {{- else }}
+                ports:
+                  - containerPort: 8000
+                    name: serve
+                    protocol: TCP
+                {{- end }}
+                lifecycle:
+                  preStop:
+                    exec:
+                      command: ["/bin/sh", "-c", "ray stop"]
+                {{- if .resources }}
+                resources:
+                  {{- if .resources.limits }}
+                  limits:
+                    {{- if .resources.limits.cpu }}
+                    cpu: "{{ .resources.limits.cpu }}"
+                    {{- end }}
+                    {{- if .resources.limits.memory }}
+                    memory: "{{ .resources.limits.memory }}"
+                    {{- end }}
+                    {{- if .resources.limits.gpu }}
+                    nvidia.com/gpu: "{{ .resources.limits.gpu }}"
+                    {{- end }}
+                  {{- end }}
+                  {{- if .resources.requests }}
+                  requests:
+                    {{- if .resources.requests.cpu }}
+                    cpu: "{{ .resources.requests.cpu }}"
+                    {{- end }}
+                    {{- if .resources.requests.memory }}
+                    memory: "{{ .resources.requests.memory }}"
+                    {{- end }}
+                    {{- if .resources.requests.gpu }}
+                    nvidia.com/gpu: "{{ .resources.requests.gpu }}"
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+                {{- if .volumeMounts}}
+                volumeMounts:
+                  {{- range .volumeMounts }}
+                  - mountPath: {{ .mountPath }}
+                    name: {{ .name }}
+                  {{- end }}
+                {{- end }}
+                {{- if .hostAliases }}
+                hostAliases:
+                  {{- range $i, $alias := .hostAliases }}
+                  {{- if not (and $alias.ip $alias.hostnames) }}
+                  {{- fail (printf "Invalid hostAlias at index %d: both 'ip' and 'hostnames' must be set." $i) }}
+                  {{- end }}
+                  - ip: {{ $alias.ip | quote }}
+                    hostnames:
+                      {{- range $alias.hostnames }}
+                      - {{ . | quote }}
+                      {{- end }}
+                  {{- end }}
+                {{- end }}
+                {{- if .env }}
+                env:
+                  {{- range .env }}
+                  - name: {{ .name }}
+                    {{- if not (eq .value nil) }}
+                    value: {{ .value | quote }}
+                    {{- else if .valueFrom}}
+                    valueFrom:
+                      {{- toYaml .valueFrom | nindent 22 }}
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+            {{- if .volumes }}
+            volumes:
+              {{- range .volumes }}
+              - name: {{ .name }}
+                {{- if .persistentVolumeClaim }}
+                persistentVolumeClaim:
+                  claimName: {{ .persistentVolumeClaim.claimName }}
+                {{- end }}
+                {{- if .configMap }}
+                configMap:
+                  name: {{ .configMap }}
+                {{- end }}
+                {{- if .secretName }}
+                secret:
+                  secretName: {{ .secretName }}
+                {{- end }}
+                {{- if .hostPath }}
+                hostPath:
+                  path: {{ .hostPath.path }}
+                  {{- if .hostPath.type }}
+                  type: {{ .hostPath.type }}
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+      {{- end }}
+{{- end }}
