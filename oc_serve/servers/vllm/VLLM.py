@@ -7,6 +7,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
+from vllm.entrypoints.openai.serving_embedding import OpenAIServingEmbedding
 from vllm.entrypoints.openai.serving_pooling import OpenAIServingPooling
 from vllm.entrypoints.openai.serving_score import ServingScores
 from vllm.entrypoints.openai.serving_tokenization import OpenAIServingTokenization
@@ -22,36 +23,40 @@ from oc_serve.utils import (
 )
 from oc_serve.api.models import (
     Form,
-    Request,
-    Response,
-    StreamingResponse,
-    JSONResponse,
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    CompletionRequest,
-    CompletionResponse,
-    DetokenizeRequest,
-    DetokenizeResponse,
-    ErrorResponse,
-    TokenizeRequest,
-    TokenizeResponse,
-    ScoreRequest,
-    ScoreResponse,
-    PoolingRequest,
-    PoolingResponse,
-    TranscriptionRequest,
-    TranscribeResponseData,
-    UsageInfoTranscriptionModels,
-    SpeechResponse,
+    OCRequest,
+    OCResponse,
+    OCJSONResponse,
+    OCErrorResponse,
+    OCChatCompletionRequest,
+    OCChatCompletionResponse,
+    OCCompletionRequest,
+    OCCompletionResponse,
+    OCDetokenizeRequest,
+    OCDetokenizeResponse,
+    OCEmbeddingRequest,
+    OCEmbeddingResponse,
+    OCUsageInfoEmbed,
+    OCTokenizeRequest,
+    OCTokenizeResponse,
+    OCScoringRequest,
+    VLLMScoreResponse,
+    OCPoolingRequest,
+    OCPoolingResponse,
+    OCStreamingResponse,
+    OCTranscriptionRequest,
+    OCTranscriptionResponseData,
+    OCUsageInfoTranscriptionModels,
+    OCSpeechResponse,
+    OCRerankRequest,
+    VLLMRerankResponse,
 )
 from configs import ServerConfigs
 
 @Server.register("vllm")
 class VLLM(Server):
-    """
-    VLLM Server implementation.
-    """
+    """VLLM Server implementation."""
     def __init__(self, server_configs: ServerConfigs):
+        """Initialize the VLLM server with the given configurations."""
         self.logger = oc_logger.get_logger("vllm")
         self.engine_args = server_configs
         self.logger.info("Starting AsyncLLM Engine with args: %s", self.engine_args)
@@ -92,6 +97,14 @@ class VLLM(Server):
             models=self.openai_models,
             request_logger=None,
             return_tokens_as_token_ids=self.engine_args.extra_args.return_tokens_as_token_ids
+        )
+        self.embedding_server = OpenAIServingEmbedding(
+            self.engine,
+            model_config,
+            models=self.openai_models,
+            request_logger=None,
+            chat_template=self.engine_args.extra_args.chat_template,
+            chat_template_content_format=self.engine_args.extra_args.chat_template_content_format
         )
         self.tokenization_server = OpenAIServingTokenization(
             self.engine,
@@ -137,146 +150,190 @@ class VLLM(Server):
         self.semaphore = asyncio.Semaphore(int(self.engine_args.extra_args.max_concurrent_calls))
         self.metrics_registry = get_metrics_registry()
 
-
-    async def check_model_health(self, raw_request: Request = None):
+    async def check_model_health(self, raw_request: OCRequest = None) -> OCResponse:
+        """Check model health"""
         async with self.semaphore:
             await self.engine.check_health()
-            return Response(status_code=200,
+            return OCResponse(status_code=200,
                             content="Model is Healthy!")
 
-
-    async def get_model_info(self, raw_request: Request = None):
+    async def get_model_info(self, raw_request: OCRequest = None) -> OCResponse:
+        """Get model info"""
         async with self.semaphore:
             models = await self.openai_models.show_available_models()
-            return JSONResponse(content=models.model_dump())
+            return OCJSONResponse(content=models.model_dump())
 
-
-    async def instruct(self, request: ChatCompletionRequest, raw_request: Request):
+    async def instruct(self, request: OCChatCompletionRequest, raw_request: OCRequest) -> OCResponse:
+        """Instruct endpoint handling chat completion requests."""
         async with self.semaphore:
             self.logger.info("Instruct Request")
             generator = await self.instruction_server.create_chat_completion(request,
                                                                              raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
             if request.stream:
-                return StreamingResponse(content=generator,
+                return OCStreamingResponse(content=generator,
                                          media_type="text/event-stream")
 
-            assert isinstance(generator, ChatCompletionResponse)
-            return JSONResponse(content=generator.model_dump())
+            assert isinstance(generator, OCChatCompletionResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
-
-    async def complete(self, request: CompletionRequest, raw_request: Request):
+    async def complete(self, request: OCCompletionRequest, raw_request: OCRequest) -> OCResponse:
+        """Complete endpoint handling completion requests."""
         async with self.semaphore:
             self.logger.info("Complete Request")
             generator = await self.completion_server.create_completion(request,
                                                                        raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
             if request.stream:
-                return StreamingResponse(content=generator,
+                return OCStreamingResponse(content=generator,
                                          media_type="text/event-stream")
 
-            assert isinstance(generator, CompletionResponse)
-            return JSONResponse(content=generator.model_dump())
-
+            assert isinstance(generator, OCCompletionResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
     async def transcribe(self,
-                         request: Annotated[TranscriptionRequest, Form()],
-                         raw_request: Request):
+                         request: Annotated[OCTranscriptionRequest, Form()],
+                         raw_request: OCRequest) -> OCResponse:
         """Transcription endpoint handling audio transcription requests."""
-        self.logger.info("Request Transcribe")
-        if not bool(self.engine_args.extra_args.use_transcribe_server):
-            return JSONResponse(content={"error": {"message": "It seems "
-                                         "this model does not support transcription, "
-                                         "or transcription is disabled on this server.",
-                                         "type": "disabled_feature"}},
-                                status_code=404)
+        async with self.semaphore:
+            self.logger.info("Transcription Request")
+            if not bool(self.engine_args.extra_args.use_transcribe_server):
+                return OCJSONResponse(content={"error": {"message": "It seems "
+                                            "this model does not support transcription, "
+                                            "or transcription is disabled on this server.",
+                                            "type": "disabled_feature"}},
+                                    status_code=404)
 
-        audio_data = await request.file.read()
-        chunks, input_audio_duration = split_audio_by_time(audio_data)
-        self.logger.debug("split into %d audio chunks", len(chunks))
+            audio_data = await request.file.read()
+            chunks, input_audio_duration = split_audio_by_time(audio_data)
+            self.logger.debug("split into %d audio chunks", len(chunks))
 
-        texts = []
-        for i, chunk in enumerate(chunks):
-            self.logger.debug("processing audio chunk %d", i)
-            generator = await self.transcription_server.create_transcription(
-                chunk, request, raw_request
-            )
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
-                                    status_code=generator.code)
+            texts = []
+            for i, chunk in enumerate(chunks):
+                self.logger.debug("processing audio chunk %d", i)
+                generator = await self.transcription_server.create_transcription(
+                    chunk, request, raw_request
+                )
+                if isinstance(generator, OCErrorResponse):
+                    return OCJSONResponse(content=generator.model_dump(),
+                                        status_code=generator.code)
 
-            data = generator.model_dump()
-            texts.append(data["text"])
-            response = SpeechResponse(
-                model=self.engine_args.model,
-                data=[TranscribeResponseData(index=1, text=" ".join(texts))],
-                usage=UsageInfoTranscriptionModels(transcription_tokens=0,
-                                                   input_audio_duration=input_audio_duration),
-            )
+                data = generator.model_dump()
+                texts.append(data["text"])
+                response = OCSpeechResponse(
+                    model=self.engine_args.model,
+                    data=[OCTranscriptionResponseData(index=1, text=" ".join(texts))],
+                    usage=OCUsageInfoTranscriptionModels(transcription_tokens=0,
+                                                    input_audio_duration=input_audio_duration),
+                )
 
-        return JSONResponse(content=response.model_dump(exclude_none=True))
+            return OCJSONResponse(content=response.model_dump(exclude_none=True))
 
-
-    async def metrics(self, request: Request = None) -> Response:
-        return Response(generate_latest(self.metrics_registry),
-                        headers={"Content-Type": CONTENT_TYPE_LATEST})
-
-
-    async def tokenize(self, request: TokenizeRequest, raw_request: Request):
+    async def tokenize(self, request: OCTokenizeRequest, raw_request: OCRequest) -> OCResponse:
+        """Tokenization endpoint handling tokenization requests."""
         async with self.semaphore:
             self.logger.info("Tokenize Request")
             generator = await self.tokenization_server.create_tokenize(request,
                                                                        raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
-            assert isinstance(generator, TokenizeResponse)
-            return JSONResponse(content=generator.model_dump())
+            assert isinstance(generator, OCTokenizeResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
+    async def detokenize(self, request: OCDetokenizeRequest, raw_request: OCRequest) -> OCResponse:
+        """Detokenization endpoint handling detokenization requests."""
+        async with self.semaphore:
+            self.logger.info("Detokenize Request")
+            generator = await self.tokenization_server.create_detokenize(request,
+                                                                         raw_request)
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
+                                    status_code=generator.code)
+            assert isinstance(generator, OCDetokenizeResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
-    async def scoring(self, request: ScoreRequest, raw_request: Request):
+    async def score(self, request: OCScoringRequest, raw_request: OCRequest) -> OCResponse:
+        """Scoring endpoint handling scoring requests."""
         if not int(self.engine_args.extra_args.vllm_enable_scoring) or self.scoring_server is None:
-            return JSONResponse(content={"error": {"message": "Scoring is disabled on this server.",
+            return OCJSONResponse(content={"error": {"message": "Scoring is disabled on this server.",
                                    "type": "disabled_feature"}},
                                 status_code=404)
         async with self.semaphore:
             self.logger.info("Scoring Request")
             generator = await self.scoring_server.create_score(request,
                                                                raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
-            assert isinstance(generator, ScoreResponse)
-            return JSONResponse(content=generator.model_dump())
+            assert isinstance(generator, VLLMScoreResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
-
-    async def pooling(self, request: PoolingRequest, raw_request: Request):
+    async def pool(self, request: OCPoolingRequest, raw_request: OCRequest) -> OCResponse:
+        """Pooling endpoint handling pooling requests."""
         if not int(self.engine_args.extra_args.vllm_enable_pooling) or self.pooling_server is None:
-            return JSONResponse(content={"error": {"message": "Pooling is disabled on this server.",
+            return OCJSONResponse(content={"error": {"message": "Pooling is disabled on this server.",
                                                    "type": "disabled_feature"}},
                                 status_code=404)
         async with self.semaphore:
             self.logger.info("Pooling Request")
             generator = await self.pooling_server.create_pooling(request,
                                                                  raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
-            assert isinstance(generator, PoolingResponse)
-            return JSONResponse(content=generator.model_dump())
+            assert isinstance(generator, OCPoolingResponse)
+            return OCJSONResponse(content=generator.model_dump())
 
-
-    async def detokenize(self, request: DetokenizeRequest, raw_request: Request):
+    async def rerank(self, request: OCRerankRequest, raw_request: OCRequest) -> OCResponse:
+        """Reranking endpoint handling reranking requests."""
+        if not int(self.engine_args.extra_args.vllm_enable_scoring) or self.scoring_server is None:
+            return OCJSONResponse(content={"error": {"message": "Reranking is disabled on this server.",
+                                   "type": "disabled_feature"}},
+                                status_code=404)
         async with self.semaphore:
-            self.logger.info("Detokenize Request")
-            generator = await self.tokenization_server.create_detokenize(request,
-                                                                         raw_request)
-            if isinstance(generator, ErrorResponse):
-                return JSONResponse(content=generator.model_dump(),
+            self.logger.info("Rerank Request")
+            generator = await self.scoring_server.do_rerank(request,
+                                                                    raw_request)
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(content=generator.model_dump(),
                                     status_code=generator.code)
-            assert isinstance(generator, DetokenizeResponse)
-            return JSONResponse(content=generator.model_dump())
+            assert isinstance(generator, VLLMRerankResponse)
+            return OCJSONResponse(content=generator.model_dump())
+
+    async def embed(self, request: OCEmbeddingRequest, raw_request: OCRequest) -> OCResponse:
+        """Embedding endpoint handling embedding requests."""
+        async with self.semaphore:
+            self.logger.info("Embedding Request")
+            generator = await self.embedding_server.create_embedding(
+                request, raw_request
+            )
+            if isinstance(generator, OCErrorResponse):
+                return OCJSONResponse(
+                    content=generator.model_dump(), status_code=generator.code
+                )
+            assert isinstance(generator, OCEmbeddingResponse)
+            vllm_info, num_inputs = generator.usage, len(generator.data)
+            response = generator.model_dump()
+            data_list = response.get("data") or []
+            if data_list and isinstance(data_list[0], dict) and "embedding" in data_list[0]:
+                embedding_dim = len(data_list[0]["embedding"])
+            else:
+                embedding_dim = 0
+            info = OCUsageInfoEmbed(
+                prompt_tokens=vllm_info.prompt_tokens,
+                total_tokens=vllm_info.total_tokens,
+                embedding_dimension_size=embedding_dim,
+                total_inputs=num_inputs,
+            )
+            response["usage"] = info.model_dump()
+            return OCJSONResponse(content=response)
+
+    async def get_metrics(self, request: OCRequest = None) -> OCResponse:
+        """Get metrics endpoint handling metrics requests."""
+        return OCResponse(generate_latest(self.metrics_registry),
+                        headers={"Content-Type": CONTENT_TYPE_LATEST})

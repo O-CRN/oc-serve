@@ -10,20 +10,21 @@ from typing import Callable, ClassVar, Dict, Type, TypeVar, Annotated
 from configs import ServerConfigs
 from oc_serve.api.models import (
     Form,
-    ChatCompletionRequest,
-    CompletionRequest,
-    DetokenizeRequest,
-    PoolingRequest,
-    Request,
-    Response,
-    ScoreRequest,
-    TokenizeRequest,
-    TranscriptionRequest,
+    OCChatCompletionRequest,
+    OCCompletionRequest,
+    OCDetokenizeRequest,
+    OCPoolingRequest,
+    OCRequest,
+    OCResponse,
+    OCScoringRequest,
+    OCTokenizeRequest,
+    OCTranscriptionRequest,
+    OCRerankRequest,
+    OCEmbeddingRequest,
 )
 
 
 S = TypeVar("S", bound="Server")
-
 
 class Server(ABC):
     """Abstract Model Server Class"""
@@ -78,52 +79,62 @@ class Server(ABC):
         pass
 
     @abstractmethod
-    async def check_model_health(self, raw_request: Request):
+    async def check_model_health(self, raw_request: OCRequest) -> OCResponse:
         """Check Model Health Endpoint"""
         pass
 
     @abstractmethod
-    async def get_model_info(self, raw_request: Request):
+    async def get_model_info(self, raw_request: OCRequest) -> OCResponse:
         """Get Model Info Endpoint"""
         pass
 
     @abstractmethod
-    async def instruct(self, request: ChatCompletionRequest, raw_request: Request):
+    async def instruct(self, request: OCChatCompletionRequest, raw_request: OCRequest) -> OCResponse:
         """Instruct Endpoint"""
         pass
 
     @abstractmethod
-    async def complete(self, request: CompletionRequest, raw_request: Request):
+    async def complete(self, request: OCCompletionRequest, raw_request: OCRequest) -> OCResponse:
         """Complete Endpoint"""
         pass
 
     @abstractmethod
-    async def transcribe(self, request: Annotated[TranscriptionRequest, Form()],
-                       raw_request: Request) -> Response:
+    async def transcribe(self, request: Annotated[OCTranscriptionRequest, Form()],
+                       raw_request: OCRequest) -> OCResponse:
         """Transcribe Endpoint"""
         pass
 
     @abstractmethod
-    async def metrics(self, request: Request) -> Response:
-        """Get Metrics Endpoint"""
-        pass
-
-    @abstractmethod
-    async def tokenize(self, request: TokenizeRequest, raw_request: Request):
+    async def tokenize(self, request: OCTokenizeRequest, raw_request: OCRequest) -> OCResponse:
         """Tokenize Endpoint"""
         pass
 
     @abstractmethod
-    async def scoring(self, request: ScoreRequest, raw_request: Request):
+    async def detokenize(self, request: OCDetokenizeRequest, raw_request: OCRequest) -> OCResponse:
+        """Detokenize Endpoint"""
+        pass
+
+    @abstractmethod
+    async def score(self, request: OCScoringRequest, raw_request: OCRequest) -> OCResponse:
         """Scoring Endpoint"""
         pass
 
     @abstractmethod
-    async def pooling(self, request: PoolingRequest, raw_request: Request):
+    async def pool(self, request: OCPoolingRequest, raw_request: OCRequest) -> OCResponse:
         """Pooling Endpoint"""
         pass
 
     @abstractmethod
-    async def detokenize(self, request: DetokenizeRequest, raw_request: Request):
-        """Detokenize Endpoint"""
+    async def rerank(self, request: OCRerankRequest, raw_request: OCRequest) -> OCResponse:
+        """Rerank Endpoint"""
+        pass
+
+    @abstractmethod
+    async def embed(self, request: OCEmbeddingRequest, raw_request: OCRequest) -> OCResponse:
+        """Embedding Endpoint"""
+        pass
+
+    @abstractmethod
+    async def get_metrics(self, request: OCRequest) -> OCResponse:
+        """Get Metrics Endpoint"""
         pass

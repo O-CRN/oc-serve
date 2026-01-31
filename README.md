@@ -18,7 +18,7 @@
 
 Before deploying OC-Serve, ensure you have the following components installed in your Kubernetes cluster:
 
-- **Kubernetes**: Version 1.215 or higher
+- **Kubernetes**: Version 1.25 or higher
 - **KubeRay**: If Ray will be used for distributed orchestration
 - **GPU Operator**: For GPU resource management
 
@@ -28,8 +28,8 @@ Before deploying OC-Serve, ensure you have the following components installed in
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/O-CRN/oc-serve.git
-cd oc-serve
+git clone https://github.com/O-CRN/OC-Serve.git
+cd OC-Serve
 ```
 
 2. Install using Helm:
@@ -244,7 +244,7 @@ applications:
 ### Project Structure
 
 ```
-oc-serve/
+OC-Serve/
 ├── configs/              # Configuration management
 ├── helm/                 # Kubernetes Helm charts
 ├── oc_serve/            # Core application code
@@ -265,7 +265,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Support
 
-For issues, questions, or contributions, please visit our [GitHub repository](https://github.com/O-CRN/oc-serve).
+For issues, questions, or contributions, please visit our [GitHub repository](https://github.com/O-CRN/OC-Serve).
 
 ## Acknowledgments
 

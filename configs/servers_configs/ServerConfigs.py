@@ -7,8 +7,8 @@ from dataclasses import dataclass, is_dataclass
 from typing import Callable, ClassVar, Dict, Type, TypeVar
 import inspect
 
-C = TypeVar("C", bound="ServerConfigs")
 
+C = TypeVar("C", bound="ServerConfigs")
 
 @dataclass
 class ServerConfigs:
